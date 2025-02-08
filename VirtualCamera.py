@@ -1,26 +1,10 @@
 import numpy as np
 import copy
-def create_camera_matrix(fx,fy,cx,cy,skew = 0):
-    """
-    Initialize a camera matrix according to intrinsic parameters.
-    :param fx:          Horizontal focal length (in px)
-    :param fy:          Vertical focal length (in px)
-    :param cx:          Horizontal principal point offset (in px)
-    :param cy:          Vertical principal point offset (in px)
-    :param skew:        (opt.) Axis skew factor
-    :return:            Camera matrix
-    """
-    # Camera matrix:
-    K = np.identity(3)
-    K[0, 0] = fx
-    K[1, 1] = fy
-    K[0, 2] = cx
-    K[1, 2] = cy
-    K[0, 1] = skew
-    return K
+import scipy
+
 
 class VirtualCamera:
-    def __init__(self,K,R = np.zeros((3,3)),t = np.ones(3),D = 0,image_size = (640,480),clip_near = 0.001,clip_far = 10000.0,background_color = (0,0,1)) -> None:
+    def __init__(self,K,R = np.zeros((3,3)),t = np.ones(3),D = 0,image_size = (640,480),clip_near = 0.001,clip_far = 10000.0) -> None:
         self._K = K
         self._R = R
         self._t = t
@@ -28,14 +12,70 @@ class VirtualCamera:
         self._image_size = image_size
         self._clip_near = clip_near
         self._clip_far = clip_far
-        self._background_color = background_color
-        self._projection_matrix = convert_hz_intrinsic_to_opengl_projection(self)
+        self._projection_matrix = _convert_hz_intrinsic_to_opengl_projection(self)
     def get_K(self):
         return self._K
     def copy(self):
         return copy.deepcopy(self)
+    def get_projection_matrix(self):
+        return self._projection_matrix
     
-def convert_hz_intrinsic_to_opengl_projection(vc : VirtualCamera,x0=0,y0=0, flipy=False):
+    @staticmethod
+    def create_camera_matrix(fx,fy,cx,cy,skew = 0):
+        """
+        Initialize a camera matrix according to intrinsic parameters.
+        :param fx:          Horizontal focal length (in px)
+        :param fy:          Vertical focal length (in px)
+        :param cx:          Horizontal principal point offset (in px)
+        :param cy:          Vertical principal point offset (in px)
+        :param skew:        (opt.) Axis skew factor
+        :return:            Camera matrix
+        """
+        # Camera matrix:
+        K = np.identity(3)
+        K[0, 0] = fx
+        K[1, 1] = fy
+        K[0, 2] = cx
+        K[1, 2] = cy
+        K[0, 1] = skew
+        return K
+    
+    @staticmethod
+    def look_at(camera_position, target_position, roll_angle=0):
+        """
+        Return the rotation matrix so that the camera faces the target.
+        Snippet by Wadim Kehl (https://github.com/wadimkehl/ssd-6d/blob/master/rendering)
+        :param camera_position:     Camera position/translation
+        :param target_position:     Target position
+        :param roll_angle:          Roll angle (in degrees)
+        :return:                    4x4 transformation matrix
+        """
+        eye_direction = target_position - camera_position
+        # Compute what is the "up" vector of the camera:
+        if eye_direction[0] == 0 and eye_direction[1] == 0 and eye_direction[2] != 0:
+            up = [-1, 0, 0]
+        else:
+            up = [0, 0, 1]
+
+        # Compute rotation matrix:
+        rotation_matrix = np.zeros((3, 3))
+        rotation_matrix[:, 2] = -eye_direction / np.linalg.norm(eye_direction)  # View direction towards origin
+        rotation_matrix[:, 0] = np.cross(rotation_matrix[:, 2], up)  # Camera-Right
+        rotation_matrix[:, 0] /= np.linalg.norm(rotation_matrix[:, 0])
+        rotation_matrix[:, 1] = np.cross(rotation_matrix[:, 2], rotation_matrix[:, 0])  # Camera-Down
+        rotation_matrix = rotation_matrix.T
+
+        # Apply roll rotation using Rodrigues' formula + set position accordingly:
+        rodriguez = np.asarray([0, 0, 1]) * (roll_angle * np.pi / 180.0)
+        angle_axis = scipy.linalg.expm(np.cross(np.eye(3), rodriguez))
+        rotation_matrix = np.dot(angle_axis, rotation_matrix)
+
+        transform_matrix = np.eye(4)
+        transform_matrix[0:3, 0:3] = rotation_matrix
+        transform_matrix[0:3, 3] = [0, 0, scipy.linalg.norm(camera_position)]
+        return transform_matrix
+    
+def _convert_hz_intrinsic_to_opengl_projection(vc : VirtualCamera,x0=0,y0=0, flipy=False):
     """
     Convert camera parameter (Hartley-Zisserman intrinsic matrix) into a projection matrix for OpenGL.
     Snippet by Andrew Straw

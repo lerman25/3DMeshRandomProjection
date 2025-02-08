@@ -68,5 +68,6 @@ def plot_image_grid(images, titles=None, figure=None,
             ax_img.imshow(images[j][i], **imshow_params)
 
     figure.tight_layout()
+    plt.show()
     return figure
 
